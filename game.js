@@ -35,6 +35,55 @@
   const keys = { left: false, right: false };
   let pointerX = null;
 
+  // ---------- sound (Web Audio, no external files) ----------
+  const MUTE_KEY = 'breakout.muted';
+  let audioCtx = null;
+  let muted = localStorage.getItem(MUTE_KEY) === '1';
+
+  function ensureAudio() {
+    if (!audioCtx) {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return null;
+      audioCtx = new AC();
+    }
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    return audioCtx;
+  }
+
+  function tone({ freq, endFreq = freq, type = 'square', duration = 0.08, volume = 0.15, delay = 0 }) {
+    if (muted) return;
+    const ac = ensureAudio();
+    if (!ac) return;
+    const t0 = ac.currentTime + delay;
+    const osc = ac.createOscillator();
+    const gain = ac.createGain();
+    osc.type = type;
+    osc.frequency.setValueAtTime(freq, t0);
+    osc.frequency.exponentialRampToValueAtTime(Math.max(endFreq, 1), t0 + duration);
+    gain.gain.setValueAtTime(volume, t0);
+    gain.gain.exponentialRampToValueAtTime(0.001, t0 + duration);
+    osc.connect(gain).connect(ac.destination);
+    osc.start(t0);
+    osc.stop(t0 + duration + 0.02);
+  }
+
+  const sfx = {
+    paddle: () => tone({ freq: 440, endFreq: 660, type: 'triangle', duration: 0.07 }),
+    wall: () => tone({ freq: 220, type: 'triangle', duration: 0.04, volume: 0.08 }),
+    brick: (row) => tone({ freq: 600 + row * 90, endFreq: 900 + row * 90, duration: 0.06 }),
+    crack: () => tone({ freq: 300, endFreq: 200, type: 'sawtooth', duration: 0.06, volume: 0.1 }),
+    launch: () => tone({ freq: 500, endFreq: 1000, type: 'sine', duration: 0.12 }),
+    lose: () => tone({ freq: 300, endFreq: 80, type: 'sawtooth', duration: 0.4, volume: 0.2 }),
+    levelClear: () => [523, 659, 784, 1047].forEach((f, i) => tone({ freq: f, type: 'square', duration: 0.15, delay: i * 0.12 })),
+    gameOver: () => [392, 330, 262, 196].forEach((f, i) => tone({ freq: f, type: 'sawtooth', duration: 0.25, delay: i * 0.2, volume: 0.18 })),
+  };
+
+  function toggleMute() {
+    muted = !muted;
+    localStorage.setItem(MUTE_KEY, muted ? '1' : '0');
+    if (!muted) sfx.paddle();
+  }
+
   function updateHud() {
     ui.score.textContent = score;
     ui.lives.textContent = lives;
@@ -58,6 +107,7 @@
           maxHp: hp,
           color: ROW_COLORS[r % ROW_COLORS.length],
           points: (BRICK.rows - r) * 10,
+          row: r,
         });
       }
     }
@@ -102,12 +152,14 @@
     updateHud();
     if (lives <= 0) {
       state = State.GAME_OVER;
+      sfx.gameOver();
       if (score > hiscore) {
         hiscore = score;
         localStorage.setItem(HISCORE_KEY, String(hiscore));
         updateHud();
       }
     } else {
+      sfx.lose();
       resetBall();
       state = State.READY;
     }
@@ -122,8 +174,10 @@
   }
 
   function start() {
+    ensureAudio();
     if (state === State.READY) {
       launchBall();
+      sfx.launch();
       state = State.PLAYING;
     } else if (state === State.GAME_OVER) {
       newGame();
@@ -145,6 +199,7 @@
     if (['ArrowRight', 'd', 'D'].includes(e.key)) keys.right = true;
     if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); start(); }
     if (e.key === 'p' || e.key === 'P' || e.key === 'Escape') togglePause();
+    if (e.key === 'm' || e.key === 'M') toggleMute();
   });
   window.addEventListener('keyup', (e) => {
     if (['ArrowLeft', 'a', 'A'].includes(e.key)) keys.left = false;
@@ -184,9 +239,9 @@
       ball.y += ball.vy * dt;
 
       // walls
-      if (ball.x - ball.r < 0) { ball.x = ball.r; ball.vx = Math.abs(ball.vx); }
-      if (ball.x + ball.r > W) { ball.x = W - ball.r; ball.vx = -Math.abs(ball.vx); }
-      if (ball.y - ball.r < 0) { ball.y = ball.r; ball.vy = Math.abs(ball.vy); }
+      if (ball.x - ball.r < 0) { ball.x = ball.r; ball.vx = Math.abs(ball.vx); sfx.wall(); }
+      if (ball.x + ball.r > W) { ball.x = W - ball.r; ball.vx = -Math.abs(ball.vx); sfx.wall(); }
+      if (ball.y - ball.r < 0) { ball.y = ball.r; ball.vy = Math.abs(ball.vy); sfx.wall(); }
 
       // paddle
       if (ball.vy > 0 &&
@@ -198,6 +253,7 @@
         ball.vx = Math.cos(angle) * speed;
         ball.vy = Math.sin(angle) * speed;
         ball.y = paddle.y - ball.r;
+        sfx.paddle();
       }
 
       // bricks
@@ -219,8 +275,10 @@
         if (b.hp <= 0) {
           score += b.points;
           spawnParticles(b.x + b.w / 2, b.y + b.h / 2, b.color);
+          sfx.brick(BRICK.rows - b.row);
         } else {
           score += 5;
+          sfx.crack();
         }
         updateHud();
         break;
@@ -229,6 +287,7 @@
       if (bricks.every((b) => b.hp <= 0)) {
         state = State.LEVEL_CLEAR;
         stateTimer = 0;
+        sfx.levelClear();
       }
 
       // bottom
@@ -308,6 +367,11 @@
     else if (state === State.PAUSED) drawOverlay('PAUSE', 'P で再開');
     else if (state === State.LEVEL_CLEAR) drawOverlay('LEVEL CLEAR!', 'Space / クリックで次のレベル');
     else if (state === State.GAME_OVER) drawOverlay('GAME OVER', `SCORE ${score}  —  Space / クリックでリトライ`);
+
+    ctx.textAlign = 'right';
+    ctx.font = '14px system-ui, sans-serif';
+    ctx.fillStyle = 'rgba(184,192,255,0.7)';
+    ctx.fillText(muted ? '🔇 M: サウンドON' : '🔊 M: サウンドOFF', W - 10, H - 10);
   }
 
   // ---------- loop ----------
