@@ -14,9 +14,16 @@
   };
 
   const HISCORE_KEY = 'breakout.hiscore';
-  const PADDLE = { w: 100, h: 14, speed: 520, minW: 60 };
-  const BALL = { r: 7, baseSpeed: 320, maxSpeed: 620 };
+  const PADDLE = { w: 140, h: 14, speed: 520, minW: 60 };
+  const BALL = { r: 7, baseSpeed: 240, maxSpeed: 620 };
   const BRICK = { rows: 6, cols: 10, h: 20, gap: 4, top: 60, side: 20 };
+
+  // difficulty ramps from a gentle level 1 to full strength around level 4
+  const rowsForLevel = (lv) => Math.min(BRICK.rows, 3 + lv);
+  const speedForLevel = (lv) => Math.min(BALL.baseSpeed + (lv - 1) * 40, BALL.maxSpeed);
+  const paddleWidthForLevel = (lv) => Math.max(PADDLE.minW, PADDLE.w - (lv - 1) * 12);
+  const toughRowsForLevel = (lv) => Math.max(0, Math.min(lv - 2, 3));
+  const paddleBoostForLevel = (lv) => (lv === 1 ? 1 : 1.02);
   const ROW_COLORS = ['#ff5f6d', '#ffa15c', '#ffd85c', '#7bff8a', '#5cc8ff', '#b28cff'];
 
   const State = { READY: 0, PLAYING: 1, PAUSED: 2, LEVEL_CLEAR: 3, GAME_OVER: 4 };
@@ -94,10 +101,10 @@
   function buildBricks() {
     bricks = [];
     const bw = (W - BRICK.side * 2 - BRICK.gap * (BRICK.cols - 1)) / BRICK.cols;
-    for (let r = 0; r < BRICK.rows; r++) {
+    const rows = rowsForLevel(level);
+    for (let r = 0; r < rows; r++) {
       for (let c = 0; c < BRICK.cols; c++) {
-        // higher levels add tougher bricks in upper rows
-        const hp = r < Math.min(level - 1, 3) ? 2 : 1;
+        const hp = r < toughRowsForLevel(level) ? 2 : 1;
         bricks.push({
           x: BRICK.side + c * (bw + BRICK.gap),
           y: BRICK.top + r * (BRICK.h + BRICK.gap),
@@ -121,7 +128,7 @@
   }
 
   function launchBall() {
-    const speed = Math.min(BALL.baseSpeed + (level - 1) * 30, BALL.maxSpeed);
+    const speed = speedForLevel(level);
     const angle = (-Math.PI / 2) + (Math.random() - 0.5) * (Math.PI / 3);
     ball.vx = Math.cos(angle) * speed;
     ball.vy = Math.sin(angle) * speed;
@@ -131,7 +138,7 @@
     score = 0;
     lives = 3;
     level = 1;
-    paddle.w = PADDLE.w;
+    paddle.w = paddleWidthForLevel(level);
     buildBricks();
     resetBall();
     updateHud();
@@ -140,7 +147,7 @@
 
   function nextLevel() {
     level++;
-    paddle.w = Math.max(PADDLE.minW, PADDLE.w - 8);
+    paddle.w = paddleWidthForLevel(level);
     buildBricks();
     resetBall();
     updateHud();
@@ -248,7 +255,7 @@
           ball.y + ball.r >= paddle.y && ball.y - ball.r <= paddle.y + paddle.h &&
           ball.x >= paddle.x - ball.r && ball.x <= paddle.x + paddle.w + ball.r) {
         const hit = (ball.x - (paddle.x + paddle.w / 2)) / (paddle.w / 2); // -1..1
-        const speed = Math.min(Math.hypot(ball.vx, ball.vy) * 1.02, BALL.maxSpeed);
+        const speed = Math.min(Math.hypot(ball.vx, ball.vy) * paddleBoostForLevel(level), BALL.maxSpeed);
         const angle = -Math.PI / 2 + hit * (Math.PI / 3);
         ball.vx = Math.cos(angle) * speed;
         ball.vy = Math.sin(angle) * speed;
